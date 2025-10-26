@@ -358,13 +358,21 @@ async function tryAutoLoadExcel(){
 
 /* ===== UI ===== */
 function fillStationSelects(){
-  const box=$('#multiSelect'); box.innerHTML='';
-  stations.forEach((r,i)=>{
-    const o=document.createElement('option');
-    o.value=i; o.textContent=(r.tentram||'(không tên)').trim();
+  const box = $('#multiSelect');
+  box.innerHTML = '';
+  stations.forEach((r, i) => {
+    const o = document.createElement('option');
+    o.value = i;
+    o.textContent = (r.tentram || '(không tên)').trim();
     box.appendChild(o);
   });
-  for(let i=0;i<Math.min(4,stations.length);i++){ box.options[i].selected=true; }
+
+  // Mặc định: chọn tất cả các option
+  for (let i = 0; i < box.options.length; i++) {
+    box.options[i].selected = true;
+  }
+}
+
 }
 
 /* ====== MÀU THEO NGƯỠNG + HÀNG TỔNG ====== */
