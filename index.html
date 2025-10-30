@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>LƯỢNG MƯA CÁC TRẠM TỰ ĐỘNG KHU VỰC TRUNG BỘ</title>
+  <title>ĐÀI KTTV TRUNG BỘ - LƯỢNG MƯA CÁC TRẠM TỰ ĐỘNG</title>
 
   <!-- ====== Base UI ====== -->
   <style>
@@ -143,11 +143,19 @@
 
   <!-- XLSX reader -->
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+/* Override: toolbar không còn sticky -> sẽ cuộn theo trang (không che bảng) */
+.card.toolbar {
+  position: static !important;
+  top: auto !important;
+  z-index: auto !important;
+}
+</style>
 </head>
 <body>
 <header>
   <h1 class="title">
-    <div class="l1">LƯỢNG MƯA CÁC TRẠM TỰ ĐỘNG KHU VƯC TRUNG BỘ</div>
+    <div class="l1">ĐÀI KTTV TRUNG BỘ - LƯỢNG MƯA CÁC TRẠM TỰ ĐỘNG</div>
     <div class="l2">Phục vụ công tác phòng chống thiên tai</div>
   </h1>
 </header>
@@ -249,6 +257,15 @@
 
         <!-- Chart box + agregates (giữ nguyên giao diện, thêm phần tổng hợp trong box này) -->
         <div id="chartBox" class="card" style="min-height:360px; padding:12px;">
+
+          <!-- small adjustment control: can chỉnh margin-left (px) của title/time line -->
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <label style="font-size:12px;color:#475569;margin:0 4px 0 0">Điều chỉnh canh lề (px)</label>
+            <input id="adjustPixels" type="range" min="-100" max="100" value="-12" style="width:220px">
+            <input id="adjustPixelsNumber" type="number" value="-12" style="width:72px;padding:6px;border:1px solid #e2e8f0;border-radius:8px">
+            <button id="resetAdjust" class="btn ghost" style="width:90px;padding:6px">Reset</button>
+          </div>
+
           <div id="chartInner" style="font-size:12px;color:#64748b">
             Chưa có dữ liệu để vẽ đồ thị.
           </div>
@@ -467,7 +484,7 @@ const normTime=t=> (t==null?'':String(t).trim().replace('T',' '));
 
 /* ===== DATE LIMITS ===== */
 function pad2(n){return String(n).padStart(2,'0')}
-function toLocalDT(d){return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`}
+function toLocalDT(d){return `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`} 
 function fiveDaysAgoMidnight(){ const n=new Date(); n.setDate(n.getDate()-5); n.setHours(0,0,0,0); return n; }
 function setDateLimits(){
   const now=new Date();
@@ -515,7 +532,7 @@ function renderChart(rows){
   const host = $('#chartInner');
   host.innerHTML = '';
 
-  // Không có dữ liệu
+  // Nếu không có dữ liệu
   if (!Array.isArray(rows) || !rows.length){
     const div=document.createElement('div');
     div.style.cssText='font-size:12px;color:#64748b';
@@ -549,18 +566,78 @@ function renderChart(rows){
     return { name, total: Number(sum.toFixed(1)) };
   });
 
+  /* ========== CONFIG TÙY CHỈNH NHỎ (ANH CÓ THỂ THAY) ========== */
+  // ADJUST_PIXELS sẽ được đọc từ control (nếu có), mặc định -12
+  const defaultAdjust = -12;
+  const ADJUST_PIXELS = (typeof window.__ADJUST_PIXELS === 'number') ? window.__ADJUST_PIXELS : defaultAdjust;
+  const BAR_LABEL_FONT_SIZE = 9;      // font size cho chữ trên đỉnh cột (số)
+  /* ========================================================= */
+
+  // --- Tiêu đề và dòng thời gian (thêm phần hiển thị ngay trong chartInner) ---
   const title = document.createElement('div');
-  title.style.cssText='font-size:12px;color:#64748b;margin-bottom:8px';
-  title.textContent='Đồ thị tổng lượng mưa theo trạm (mm).';
+  title.style.cssText='font-size:13px;color:#1e3a8a;font-weight:700;margin-bottom:6px';
+  title.textContent='ĐỒ THỊ TỔNG LƯỢNG MƯA THEO TRẠM(mm).';
   host.appendChild(title);
 
-  const W =  Math.max(600, host.clientWidth || 800);
+  // Dòng khoảng thời gian (màu xanh nước biển, đậm hơn)
+  const startVal = $('#startDt').value;
+  const endVal = $('#endDt').value;
+  let range = null;
+  if (startVal && endVal){
+    const t1 = new Date(startVal);
+    const t2 = new Date(endVal);
+    const f = d => `${String(d.getHours()).padStart(2,'0')}h${String(d.getMinutes()).padStart(2,'0')} ngày ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}/${d.getFullYear()}`;
+    const txt = `Thời gian tính từ ${f(t1)} đến ${f(t2)}.`;
+    range = document.createElement('div');
+    range.style.cssText='font-size:11px;color:#1e3a8a;font-weight:700;margin-bottom:10px';
+    range.textContent = txt;
+    host.appendChild(range);
+  }
+
+  // --- Thiết lập khung vẽ SVG ---
+  // Lấy padding-left thực tế của chartBox để tính offset tương đối
+  let chartBoxPaddingLeft = 12;
+  try {
+    const cb = document.getElementById('chartBox');
+    if (cb) {
+      const cs = getComputedStyle(cb);
+      const pl = parseFloat(cs.paddingLeft || '12');
+      if (!isNaN(pl)) chartBoxPaddingLeft = pl;
+    }
+  } catch(e){ /* ignore */ }
+
+  // Kích thước canvas (dựa vào host thực tế)
+  const W = Math.max(600, host.clientWidth || 800);
   const H = 260;
-  const m = { l:50, r:16, t:12, b:90 };
+
+  // đo độ rộng nhãn trục Y để không bị che cột đầu
+  const maxY = Math.max(1, ...totals.map(t => t.total));
+  const ticks = 5;
+  const tickVals = [];
+  for (let i=0;i<=ticks;i++) tickVals.push((maxY / ticks) * i);
+
+  // tạm tạo SVG ảo để đo width nhãn Y
+  const tmpSvg = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  tmpSvg.setAttribute('width','0'); tmpSvg.setAttribute('height','0');
+  document.body.appendChild(tmpSvg);
+  let maxLabelW = 0;
+  tickVals.forEach(v=>{
+    const t = document.createElementNS(tmpSvg.namespaceURI,'text');
+    t.setAttribute('font-size','11');
+    t.textContent = v.toFixed(1);
+    tmpSvg.appendChild(t);
+    let bbox = { width: String(t.textContent).length * 6 };
+    try { bbox = t.getBBox(); } catch(e){ }
+    maxLabelW = Math.max(maxLabelW, bbox.width);
+    tmpSvg.removeChild(t);
+  });
+  document.body.removeChild(tmpSvg);
+
+  // Lề trái đủ rộng để không che trục (cộng thêm 14px đệm)
+  const m = { l: Math.ceil(maxLabelW + 14), r:16, t:12, b:90 };
+
   const innerW = W - m.l - m.r;
   const innerH = H - m.t - m.b;
-
-  const maxY = Math.max(1, ...totals.map(t => t.total));
   const y = v => m.t + innerH - (v / maxY) * innerH;
 
   const n = totals.length;
@@ -568,14 +645,14 @@ function renderChart(rows){
   const barW = Math.max(12, Math.min(48, slot * 0.7));
   const x = i => m.l + i*slot + (slot - barW)/2;
 
+  // --- SVG vẽ biểu đồ ---
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('width','100%');
   svg.setAttribute('height', H);
   svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   host.appendChild(svg);
 
-  // Lưới + ticks Y
-  const ticks = 5;
+  // Lưới và nhãn Y
   for (let i=0;i<=ticks;i++){
     const v = (maxY / ticks) * i;
     const yy = y(v);
@@ -598,7 +675,7 @@ function renderChart(rows){
     svg.appendChild(t);
   }
 
-  // Cột + nhãn
+  // Vẽ cột
   totals.forEach((d, i) => {
     const xx = x(i);
     const yy = y(d.total);
@@ -617,13 +694,12 @@ function renderChart(rows){
     label.setAttribute('x', xx + barW/2);
     label.setAttribute('y', yy - 6);
     label.setAttribute('text-anchor','middle');
-    label.setAttribute('font-size','11');
-    label.setAttribute('font-weight','700');
+    label.setAttribute('font-size', String(BAR_LABEL_FONT_SIZE));
+    label.setAttribute('font-weight','500');
     label.setAttribute('fill','#0f172a');
     label.textContent = d.total.toFixed(1);
     svg.appendChild(label);
 
-    // Nhãn tên trạm (xoay -55°)
     const baseY = m.t + innerH + 48;
     const tx = document.createElementNS(svg.namespaceURI,'text');
     tx.setAttribute('x', xx + barW/2);
@@ -644,6 +720,23 @@ function renderChart(rows){
   axis.setAttribute('y2', m.t + innerH);
   axis.setAttribute('stroke', '#cbd5e1');
   svg.appendChild(axis);
+
+  // ========== Căn chỉnh chủ động: kéo title + range sao cho thẳng hàng với trục Y ==========
+  // Tính vị trí mong muốn (margin-left) của title/range trong host (host nằm bên trong chartBox).
+  // Ta muốn: left of title = left of chart drawing origin = chartBox's padding-left + m.l
+  try {
+    const cb = document.getElementById('chartBox');
+    let cbPL = chartBoxPaddingLeft;
+    if (cb) {
+      const cs = getComputedStyle(cb);
+      const pl = parseFloat(cs.paddingLeft || cbPL);
+      if (!isNaN(pl)) cbPL = pl;
+    }
+    const desiredMargin = Math.max(0, m.l - cbPL + ADJUST_PIXELS);
+    if (title) title.style.marginLeft = `${desiredMargin}px`;
+    if (range) range.style.marginLeft = `${desiredMargin}px`;
+  } catch(e){ /* ignore */ }
+
 }
 
 /* ===== AGGREGATES: sliding windows + fixed 6h blocks ===== */
@@ -875,6 +968,36 @@ async function init(){
   setDateLimits();
   $('#startDt').addEventListener('change', setDateLimits);
   $('#endDt').addEventListener('change', setDateLimits);
+
+  // --- Adjustment control: sync range + number + reset ---
+  // lưu giá trị mặc định vào window để renderChart có thể đọc
+  window.__ADJUST_PIXELS = -12;
+
+  const adjRange = document.getElementById('adjustPixels');
+  const adjNum   = document.getElementById('adjustPixelsNumber');
+  const resetBtn = document.getElementById('resetAdjust');
+
+  if (adjRange && adjNum) {
+    adjRange.addEventListener('input', (e) => {
+      const v = Number(e.target.value) || 0;
+      adjNum.value = v;
+      window.__ADJUST_PIXELS = v;
+      // Nếu đã có dữ liệu, vẽ lại chart để thấy hiệu ứng ngay
+      if (window.__lastRows) renderChart(window.__lastRows);
+    });
+    adjNum.addEventListener('change', (e) => {
+      const v = Number(e.target.value) || 0;
+      adjRange.value = v;
+      window.__ADJUST_PIXELS = v;
+      if (window.__lastRows) renderChart(window.__lastRows);
+    });
+    resetBtn.addEventListener('click', () => {
+      window.__ADJUST_PIXELS = -12;
+      adjRange.value = -12;
+      adjNum.value = -12;
+      if (window.__lastRows) renderChart(window.__lastRows);
+    });
+  }
 
   $('#btnAutoXlsx').addEventListener('click', async ()=>{
     try{ await tryAutoLoadExcel(); }catch(e){ $('#xlsxStatus').className='status err'; $('#xlsxStatus').textContent=e.message; }
