@@ -56,7 +56,7 @@
     .btn.ghost{background:#eef2ff; color:#1e40af}
     .btn:disabled{opacity:.6; cursor:not-allowed}
     .status{font-size:12px; margin-top:6px}
-    .status.ok{color:var(--ok)} .status.err{color:var(--err)}
+    .status.ok{Color:var(--ok)} .status.err{color:var(--err)}
     .toolbar{
       display:flex; align-items:center; justify-content:space-between; gap:10px;
       position:sticky; top:calc(64px + 16px); z-index:3;
@@ -97,9 +97,13 @@
     }
 
     /* small tweaks cho khu vực bộ lọc tỉnh */
-    .province-filters { margin:8px 0 12px 0; max-height:220px; overflow:auto; border:1px solid #eef2f6; padding:8px; border-radius:8px; background:#fff }
-    .province-filters label{display:flex;align-items:center;gap:8px;padding:4px 6px;font-size:13px}
-    .prov-actions{display:flex;gap:8px;align-items:center;margin-bottom:6px}
+    .province-filters { margin:8px 0 12px 0; max-height:220px; overflow:auto; border:1px solid #eef2f6; padding:6px; border-radius:8px; background:#fff; display:flex; flex-direction:column; gap:6px }
+    .province-filters label{display:flex;align-items:center;gap:8px;padding:6px 8px;font-size:13px;border-radius:6px}
+    .province-filters label:hover{background:#f8fafc}
+    .province-filters input[type=checkbox]{width:16px;height:16px;margin:0}
+    .prov-actions{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+    .prov-actions .left{display:flex;align-items:center;gap:8px}
+    .prov-actions .right{display:flex;align-items:center}
   </style>
 
   <!-- ====== Styles riêng cho app mưa (bảng + chart) ====== -->
@@ -177,10 +181,14 @@
       <!-- ====== NEW: Province filters ====== -->
       <div style="font-size:12px;color:#475569;margin-bottom:6px">Lọc theo tỉnh/thành</div>
       <div class="prov-actions">
-        <label style="display:flex;align-items:center;gap:8px;margin:0">
-          <input type="checkbox" id="chkSelectAllProv"> <span style="font-weight:700">Chọn tất cả tỉnh</span>
-        </label>
-        <button id="btnClearProv" class="btn ghost" style="width:90px;padding:6px">Bỏ chọn</button>
+        <div class="left">
+          <label style="display:flex;align-items:center;gap:8px;margin:0">
+            <input type="checkbox" id="chkSelectAllProv"> <span style="font-weight:700;margin-left:6px">Chọn tất cả tỉnh</span>
+          </label>
+        </div>
+        <div class="right">
+          <button id="btnClearProv" class="btn ghost" style="width:90px;padding:6px">Bỏ chọn</button>
+        </div>
       </div>
       <div id="provinceHolder" class="province-filters" aria-live="polite">
         <!-- checkboxes tỉnh sẽ được tạo động ở đây -->
@@ -273,7 +281,7 @@
             Chưa có dữ liệu để vẽ đồ thị.
           </div>
 
-          <!-- AGGREGATES AREA: hiển thị bảng tổng hợp  và 6h-blocks -->
+          <!-- AGGREGATES AREA: hiển thị bảng tổng hợp  va 6h-blocks -->
           <div id="aggArea" style="margin-top:12px; display:none">
             <div style="margin-bottom:8px; font-weight:800; color:#0f172a">BẢNG MƯA LỚN NHẤT THEO TỪNG THỜI ĐOẠN</div>
             <div id="aggSummaryHolder"></div>
@@ -396,7 +404,6 @@ function buildProvinceFilters(){
   const setProv = new Map(); // key -> display label (prefers human readable)
   stations.forEach(s=>{
     const key = (s.matinh ?? '').toString().trim();
-    // allow both codes and names — we will show the code if name is code-like; user probably put province name in matinh
     const label = key || '(không rõ)';
     if(!setProv.has(key)) setProv.set(key, label);
   });
@@ -406,11 +413,13 @@ function buildProvinceFilters(){
     holder.innerHTML = '<div style="color:#94a3b8;font-size:13px">Không tìm thấy trường tỉnh (matinh) trong Excel.</div>';
     return;
   }
-  // Create checkboxes
+  // Create checkboxes (vertical stack, left aligned)
   provs.forEach(([key,label])=>{
     const id = 'prov_' + btoa(unescape(encodeURIComponent(key||'empty'))).replace(/=/g,'');
     const lab = document.createElement('label');
-    lab.innerHTML = `<input class="prov-chk" type="checkbox" value="${key}" id="${id}" checked> <span>${label || '(không rõ)'}</span>`;
+    lab.className = 'prov-item';
+    // show label text left, checkbox at start
+    lab.innerHTML = `<input class="prov-chk" type="checkbox" value="${key}" id="${id}" checked> <span style="margin-left:6px">${label || '(không rõ)'}</span>`;
     holder.appendChild(lab);
   });
 
