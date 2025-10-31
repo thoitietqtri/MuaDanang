@@ -493,17 +493,11 @@ function mmClass(val){
 }
 
 /* ===== Remaining code (renderTable, renderChart, aggregates, etc.) =====
-   Em giữ nguyên các hàm cũ như anh đã có (renderTable, renderChart, buildSeriesFromRows, ...)
+   Em giữ nguyên các hàm cũ như anh đã có (renderTable, renderChart, buildSeriesFromRows, ...).
    — chỉ cần đảm bảo các hàm này vẫn sử dụng multiSelect.options[].value (index vào stations)
    Khi lấy danh sách indices để fetch dữ liệu, dùng:
      const indices = Array.from($('#multiSelect').selectedOptions).map(o=>Number(o.value));
-   (trong code gốc của anh đã dùng kiểu này; giữ nguyên)
 */
-
-/* ---------- (bản copy nguyên hàm renderTable, renderChart và phần còn lại) ---------- */
-
-/* renderTable, renderChart, pivot, aggregates... */
-/* (anh giữ lại nguyên đoạn code các hàm này trong file gốc; em chèn đầy đủ dưới đây) */
 
 /* --- renderTable --- */
 function renderTable(rows){
@@ -821,11 +815,229 @@ function renderChart(rows){
   } catch(e){ }
 }
 
-/* --- aggregates & matrix functions (giữ nguyên) --- */
-/* ... (copy các hàm computeStationAggregates, slidingWindowSums, renderAggregatesTable, render6hMatrix từ file gốc) ... */
+/* --- thêm: buildSeriesFromRows, computeStationAggregates, slidingWindowSums, renderAggregatesTable, render6hMatrix --- */
 
-/* For brevity here I assume we kept the same aggregate functions from the original file.
-   In actual file paste, include them identically as in your working version. */
+function buildSeriesFromRows(rows){
+  // rows: mảng pivoted: mỗi phần tử { 'thoi gian': '...', 'Tram A': val, 'Tram B': val, ... }
+  // trả về map: { 'Tram A': [{t:Date, v:Number}, ...], ... }
+  const cols = Object.keys(rows[0] || {});
+  const timeCol = cols.find(c => c.toLowerCase().includes('thoi') && c.toLowerCase().includes('gian'))
+    || cols.find(c => /time|date|ngay/i.test(c)) || cols[0];
+
+  const seriesMap = {};
+  for (const c of cols) if (c !== timeCol) seriesMap[c] = [];
+
+  for (const r of rows){
+    const tRaw = r[timeCol];
+    const dt = parseTimeString(tRaw) || parseTimeString(normTime(tRaw));
+    if (!dt) continue;
+    for (const c of cols){
+      if (c === timeCol) continue;
+      const raw = r[c];
+      const v = safeNum(raw);
+      if (!isFinite(v)) continue;
+      seriesMap[c].push({ t: new Date(dt.getTime()), v: Number(v) });
+    }
+  }
+  // sort each series by time asc
+  for (const k of Object.keys(seriesMap)){
+    seriesMap[k].sort((a,b)=> a.t - b.t);
+  }
+  return seriesMap;
+}
+
+/**
+ * slidingWindowSums:
+ * - series: [{t:Date, v:Number}, ...] (sorted ascending)
+ * - windowMinutes: số phút của cửa sổ (ví dụ 60, 180, 360)
+ * trả về: { maxSum, start: Date, end: Date }
+ */
+function slidingWindowSums(series, windowMinutes){
+  const res = { maxSum: 0, start: null, end: null };
+  if (!Array.isArray(series) || series.length === 0) return res;
+  const n = series.length;
+  let j = 0;
+  let running = 0;
+  const wms = windowMinutes * 60 * 1000;
+  for (let i=0;i<n;i++){
+    // ensure j >= i
+    if (j < i) { j = i; running = 0; }
+    // expand j while time difference <= windowMinutes
+    while (j < n && (series[j].t.getTime() - series[i].t.getTime()) <= wms){
+      running += Number(series[j].v) || 0;
+      j++;
+    }
+    // running now is sum over [i, j-1] where times within windowMinutes from series[i]
+    if (running > res.maxSum){
+      res.maxSum = Number(running.toFixed(3));
+      res.start = series[i].t;
+      res.end = series[Math.max(0, j-1)].t;
+    }
+    // move i forward: subtract series[i].v from running
+    running -= Number(series[i].v) || 0;
+  }
+  return res;
+}
+
+/* computeStationAggregates(series, endDate)
+   - series: [{t:Date, v:Number}, ...] sorted asc
+   - endDate: Date object (end of requested interval) used to compute "recent3h"
+   returns object with fields: total, max1h, max3h, max6h, recent3h
+*/
+function computeStationAggregates(series, endDate){
+  const out = { total: 0, max1h: 0, max3h: 0, max6h: 0, recent3h: 0 };
+  if (!Array.isArray(series) || series.length === 0) return out;
+
+  // total
+  let tot = 0;
+  for (const s of series){ const vv = Number(s.v) || 0; tot += vv; }
+  out.total = Number(tot.toFixed(3));
+
+  // sliding windows
+  const win1 = slidingWindowSums(series, 60);
+  const win3 = slidingWindowSums(series, 180);
+  const win6 = slidingWindowSums(series, 360);
+  out.max1h = Number((win1.maxSum || 0).toFixed(3));
+  out.max3h = Number((win3.maxSum || 0).toFixed(3));
+  out.max6h = Number((win6.maxSum || 0).toFixed(3));
+
+  // recent 3h: sum of values where time > (endDate - 3h) and <= endDate
+  if (!endDate || !(endDate instanceof Date)) endDate = new Date();
+  const from = new Date(endDate.getTime() - 3*60*60*1000);
+  let recent = 0;
+  for (let i=series.length-1;i>=0;i--){
+    const s = series[i];
+    if (s.t <= endDate && s.t > from) recent += Number(s.v) || 0;
+    if (s.t <= from) break;
+  }
+  out.recent3h = Number(recent.toFixed(3));
+  return out;
+}
+
+/* renderAggregatesTable(aggs)
+   aggs: { stationName: { total, max1h, max3h, max6h, recent3h }, ... }
+*/
+function renderAggregatesTable(aggs){
+  const holder = $('#aggSummaryHolder');
+  holder.innerHTML = '';
+  if(!aggs || Object.keys(aggs).length === 0){
+    holder.innerHTML = '<div style="color:#64748b">Không có dữ liệu tổng hợp.</div>';
+    window.__lastAgg = [];
+    $('#btnExportAgg').disabled = true;
+    return;
+  }
+
+  // build array and sort by total desc
+  const arr = Object.keys(aggs).map(k => ({ name: k, ...aggs[k] }));
+  arr.sort((a,b) => (b.total || 0) - (a.total || 0));
+
+  // store for export
+  window.__lastAgg = arr.map(r => ({
+    Tram: r.name,
+    Tong_mm: Number((r.total||0).toFixed(3)),
+    Max_1h_mm: Number((r.max1h||0).toFixed(3)),
+    Max_3h_mm: Number((r.max3h||0).toFixed(3)),
+    Max_6h_mm: Number((r.max6h||0).toFixed(3)),
+    Tong_3h_gannhat_mm: Number((r.recent3h||0).toFixed(3))
+  }));
+
+  // create table
+  const table = document.createElement('table');
+  table.className = 'agg-table';
+  const thead = document.createElement('thead');
+  thead.innerHTML = `<tr>
+    <th>Trạm</th><th>Tổng (mm)</th><th>Max 1h</th><th>Max 3h</th><th>Max 6h</th><th>Tổng 3h (gần nhất)</th>
+  </tr>`;
+  table.appendChild(thead);
+  const tb = document.createElement('tbody');
+  for (const r of arr){
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td style="font-weight:700">${r.name}</td>
+      <td>${Number((r.total||0).toFixed(1))}</td>
+      <td>${Number((r.max1h||0).toFixed(1))}</td>
+      <td>${Number((r.max3h||0).toFixed(1))}</td>
+      <td>${Number((r.max6h||0).toFixed(1))}</td>
+      <td>${Number((r.recent3h||0).toFixed(1))}</td>`;
+    tb.appendChild(tr);
+  }
+  table.appendChild(tb);
+  holder.appendChild(table);
+  $('#btnExportAgg').disabled = false;
+}
+
+/* render6hMatrix(seriesMap, startDate, endDate)
+   - seriesMap: { name: [{t:Date, v:Number}, ...], ... }
+   - startDate, endDate: Date objects (use startDate as alignment for 6h blocks)
+*/
+function render6hMatrix(seriesMap, startDate, endDate){
+  const holder = $('#matrixHolder');
+  holder.innerHTML = '';
+  if (!seriesMap || Object.keys(seriesMap).length === 0){
+    holder.innerHTML = '<div style="color:#64748b">Không có dữ liệu để tính ma trận 6h.</div>';
+    return;
+  }
+  if (!(startDate instanceof Date)) startDate = new Date();
+  if (!(endDate instanceof Date)) endDate = new Date();
+
+  // normalize start to floor to nearest 6h block relative to startDate's day (blocks: 00-06,06-12,12-18,18-24)
+  const s = new Date(startDate.getTime());
+  s.setMinutes(0,0,0);
+  const h = s.getHours();
+  const blockStartHour = Math.floor(h / 6) * 6;
+  s.setHours(blockStartHour,0,0,0);
+  // build blocks until endDate
+  const blocks = [];
+  let cur = new Date(s.getTime());
+  while (cur.getTime() <= endDate.getTime()){
+    const bStart = new Date(cur.getTime());
+    const bEnd = new Date(cur.getTime() + 6*60*60*1000);
+    blocks.push({ start: bStart, end: bEnd });
+    cur = bEnd;
+    // safety: avoid infinite loop
+    if (blocks.length > 500) break;
+  }
+
+  // header row
+  const table = document.createElement('table');
+  table.className = 'rain-table';
+  table.style.minWidth = '720px';
+  const thead = document.createElement('thead');
+  const trh = document.createElement('tr');
+  trh.innerHTML = `<th>Tên trạm</th>` + blocks.map(b => `<th>${pad(b.start.getHours())}h ${pad(b.start.getDate())}/${pad(b.start.getMonth()+1)}</th>`).join('');
+  thead.appendChild(trh);
+  table.appendChild(thead);
+
+  // rows: for each station, sum values within each block
+  const tbody = document.createElement('tbody');
+  for (const name of Object.keys(seriesMap)){
+    const series = seriesMap[name] || [];
+    const tr = document.createElement('tr');
+    const tdName = document.createElement('td');
+    tdName.className = 'time';
+    tdName.textContent = name;
+    tr.appendChild(tdName);
+
+    for (const b of blocks){
+      let sum = 0;
+      // series is sorted asc -> we can iterate until t >= b.end
+      for (let i=0;i<series.length;i++){
+        const it = series[i];
+        if (it.t >= b.start && it.t < b.end){
+          sum += Number(it.v) || 0;
+        }
+        if (it.t >= b.end) break;
+      }
+      const td = document.createElement('td');
+      td.textContent = Number(sum.toFixed(1));
+      td.className = mmClass(sum);
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+  }
+
+  table.appendChild(tbody);
+  holder.appendChild(table);
+}
 
 /* ===== MAIN FLOW ===== */
 async function init(){
